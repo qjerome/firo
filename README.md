@@ -1,3 +1,5 @@
+[![Crates.io Version](https://img.shields.io/crates/v/huby?style=for-the-badge)](https://crates.io/crates/firo)
+[![docs.rs](https://img.shields.io/docsrs/lru-st?style=for-the-badge&logo=docs.rs&color=blue)](https://docs.rs/firo)
 
 <!-- cargo-rdme start -->
 
