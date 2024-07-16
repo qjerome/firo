@@ -1,3 +1,4 @@
+[![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/qjerome/firo/rust.yml?style=for-the-badge)](https://github.com/qjerome/firo/actions/workflows/rust.yml)
 [![Crates.io Version](https://img.shields.io/crates/v/firo?style=for-the-badge)](https://crates.io/crates/firo)
 [![docs.rs](https://img.shields.io/docsrs/firo?style=for-the-badge&logo=docs.rs&color=blue)](https://docs.rs/firo)
 
