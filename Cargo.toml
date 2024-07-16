@@ -1,0 +1,17 @@
+[package]
+name = "firo"
+version = "0.1.0"
+authors = ["Quentin JEROME <qjerome@rawsec.lu>"]
+edition = "2021"
+rust-version = "1.74.1"
+description = "Straightforward rotating file implementation"
+keywords = ["file", "rotate", "log"]
+license = "GPL-3.0"
+documentation = "https://docs.rs/firo"
+repository = "https://github.com/qjerome/firo"
+
+[dependencies]
+thiserror = "1.0"
+huby = "0.1"
+flate2 = "1.0"
+tempfile = "3"
