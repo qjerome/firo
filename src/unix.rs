@@ -22,31 +22,38 @@ mod test {
         time::{Duration, Instant},
     };
 
-    use crate::OpenOptions;
+    use crate::{Compression, OpenOptions};
     use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn test_mode() {
         let td = tempfile::tempdir().unwrap();
+        let mode = 0o600;
+
         let mut f = OpenOptions::new()
-            .trigger(Duration::from_millis(500).into())
-            .mode(0o700)
+            .trigger(Duration::from_secs(1).into())
+            .mode(mode)
+            .compression(Compression::Gzip)
             .create_append(td.path().join("log"))
             .unwrap();
 
-        let now = Instant::now();
+        let start = Instant::now();
 
-        while Instant::now().checked_duration_since(now).unwrap() < Duration::from_secs(2) {
+        let mut c = 0usize;
+        while Instant::now().checked_duration_since(start).unwrap() < Duration::from_secs(2) {
             writeln!(f, "test").unwrap();
+            c = c.saturating_add(1);
         }
 
-        f.flush().unwrap();
+        f.sync().unwrap();
+
+        assert_eq!(f.files_sorted_by_index().unwrap().len(), 3);
 
         for f in f.files_sorted_by_index().unwrap() {
             let meta = f.metadata().unwrap();
-            // we should also mask with umask if != 0o700
+            // we should also mask with umask if != 0oX00
             let exp_mode = meta.permissions().mode() & 0o777;
-            assert_eq!(exp_mode, 0o700);
+            assert_eq!(exp_mode, mode);
         }
     }
 }

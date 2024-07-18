@@ -87,7 +87,7 @@
 //! ```
 
 use std::{
-    fs::{self, Metadata},
+    fs::{self, Metadata, Permissions},
     io::{self, BufRead, BufReader, BufWriter, Write},
     path::{Path, PathBuf},
     thread,
@@ -97,7 +97,7 @@ use std::{
 use flate2::{read::GzDecoder, write::GzEncoder};
 use huby::ByteSize;
 #[cfg(target_family = "unix")]
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 #[cfg(windows)]
 use std::os::windows::fs::MetadataExt;
 use tempfile::{NamedTempFile, PersistError};
@@ -178,13 +178,13 @@ impl Compression {
     }
 
     /// Compression agnostic routine
-    fn compress<P: AsRef<Path>>(&self, path: P) -> Result<(), CompressionError> {
+    fn compress<P: AsRef<Path>>(&self, path: P, mode: Option<u32>) -> Result<(), CompressionError> {
         match self {
-            Self::Gzip => Self::compress_gzip(path),
+            Self::Gzip => Self::compress_gzip(path, mode),
         }
     }
 
-    fn compress_gzip<P: AsRef<Path>>(path: P) -> Result<(), CompressionError> {
+    fn compress_gzip<P: AsRef<Path>>(path: P, mode: Option<u32>) -> Result<(), CompressionError> {
         let path = path.as_ref();
         let tmp = NamedTempFile::new()?;
         let mut reader = BufReader::new(fs::File::open(path)?);
@@ -211,7 +211,12 @@ impl Compression {
 
         let new = add_extension(path, Compression::Gzip.extension());
 
-        tmp.persist(new)?;
+        tmp.persist(&new)?;
+
+        if let Some(mode) = mode {
+            #[cfg(unix)]
+            fs::set_permissions(new, Permissions::from_mode(mode))?;
+        }
 
         fs::remove_file(path)?;
 
@@ -653,8 +658,18 @@ impl File {
             if let Some(compression) = self.compression {
                 // may have been deleted by maximum size check
                 if archive_path.is_file() {
+                    let mode = {
+                        let f = || {
+                            #[cfg(not(unix))]
+                            return None;
+                            #[cfg(unix)]
+                            return self.ext.mode;
+                        };
+                        f()
+                    };
+
                     self.compress_job = Some(std::thread::spawn(move || {
-                        compression.compress(archive_path)
+                        compression.compress(archive_path, mode)
                     }));
                 }
             }
@@ -802,22 +817,26 @@ mod test {
     #[test]
     fn test_time_rotate() {
         let td = tempfile::tempdir().unwrap();
+        let p = td.path().join("log");
         let mut f = OpenOptions::new()
             .trigger(Duration::from_millis(500).into())
-            .create_append(td.path().join("log"))
+            .create_append(&p)
             .unwrap();
 
-        let now = Instant::now();
+        let start = Instant::now();
 
-        while Instant::now().checked_duration_since(now).unwrap() < Duration::from_secs(2) {
+        let mut c = 0usize;
+        while Instant::now().checked_duration_since(start).unwrap() < Duration::from_secs(2) {
             writeln!(f, "test").unwrap();
+            c = c.saturating_add(1);
         }
 
-        f.flush().unwrap();
+        f.sync().unwrap();
 
-        for f in f.files_sorted_by_index().unwrap() {
-            println!("{}", f.to_string_lossy());
-        }
+        assert_eq!(f.files_sorted_by_index().unwrap().len(), 5);
+
+        let r = BufReader::new(f.open_options().open(p).unwrap());
+        assert_eq!(r.lines().count(), c)
     }
 
     #[test]
