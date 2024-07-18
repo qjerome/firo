@@ -89,7 +89,6 @@
 use std::{
     fs::{self, Metadata},
     io::{self, BufRead, BufReader, BufWriter, Write},
-    os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     thread,
     time::{Duration, SystemTime},
@@ -97,8 +96,15 @@ use std::{
 
 use flate2::{read::GzDecoder, write::GzEncoder};
 use huby::ByteSize;
+#[cfg(target_family = "unix")]
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+#[cfg(windows)]
+use std::os::windows::fs::MetadataExt;
 use tempfile::{NamedTempFile, PersistError};
 use thiserror::Error;
+
+#[cfg(target_family = "unix")]
+mod unix;
 
 /// helper function to add an extension to a Path
 #[inline(always)]
@@ -115,6 +121,15 @@ fn match_ext<P: AsRef<Path>, S: AsRef<str>>(p: P, ext: S) -> bool {
         return ext.as_ref() == e;
     }
     false
+}
+
+#[inline(always)]
+fn file_size(meta: &Metadata) -> u64 {
+    #[cfg(unix)]
+    return meta.size();
+
+    #[cfg(windows)]
+    return meta.file_size();
 }
 
 /// Trigger enumeration used to configure when [File] rotation
@@ -236,6 +251,15 @@ pub struct OpenOptions {
     max_size: Option<ByteSize>,
     trigger: Option<Trigger>,
     compression: Option<Compression>,
+    #[cfg(target_family = "unix")]
+    ext: UnixExt,
+}
+
+#[cfg(target_family = "unix")]
+#[derive(Default, Debug, Clone, Copy)]
+struct UnixExt {
+    mode: Option<u32>,
+    flags: Option<i32>,
 }
 
 impl OpenOptions {
@@ -338,6 +362,8 @@ impl Reader {
 
 #[derive(Debug, Default)]
 pub struct File {
+    #[cfg(target_family = "unix")]
+    ext: UnixExt,
     dir: PathBuf,
     prefix: String,
     size: u64,
@@ -428,6 +454,8 @@ impl File {
             .to_path_buf();
 
         Ok(Self {
+            #[cfg(target_family = "unix")]
+            ext: opts.ext,
             dir,
             prefix: prefix.to_string_lossy().into(),
             size: 0,
@@ -453,6 +481,8 @@ impl File {
             max_size: self.max_size,
             trigger: self.trigger,
             compression: self.compression,
+            #[cfg(target_family = "unix")]
+            ext: self.ext,
         }
     }
 
@@ -566,7 +596,11 @@ impl File {
     /// summing up all the files (compressed or not) belonging to the file
     #[inline]
     pub fn size(&self) -> Result<u64, Error> {
-        Ok(self.list_files()?.iter().map(|(_, m, _)| m.size()).sum())
+        Ok(self
+            .list_files()?
+            .iter()
+            .map(|(_, m, _)| file_size(m))
+            .sum())
     }
 
     /// Manually rotate [File]. If compression is enabled, a thread
@@ -597,7 +631,9 @@ impl File {
                 if size >= max_size {
                     // we get files ordered by mtime (oldest first)
                     let mut files = self.list_files()?;
-                    files.sort_by_key(|(i, m, _)| (*i, m.mtime()));
+                    // just used as default not to panic on m.modified
+                    let def = SystemTime::now();
+                    files.sort_by_key(|(i, m, _)| (*i, m.modified().unwrap_or(def)));
                     files.reverse();
                     let mut free = size - max_size;
 
@@ -605,7 +641,7 @@ impl File {
                         // we remove at least one file, in case
                         // size == max_size
                         fs::remove_file(path)?;
-                        free = free.saturating_sub(meta.size());
+                        free = free.saturating_sub(file_size(&meta));
                         // no more space to make
                         if free == 0 {
                             break;
@@ -647,13 +683,26 @@ impl File {
 
     #[inline(always)]
     fn init_create_append(&mut self) -> Result<(), Error> {
-        let fd = fs::File::options()
-            .append(true)
-            .create(true)
-            .open(self.file_path())?;
+        let opts = {
+            let mut opts = fs::File::options();
+            #[cfg(target_family = "unix")]
+            {
+                if let Some(mode) = self.ext.mode {
+                    opts.mode(mode);
+                }
+
+                if let Some(flags) = self.ext.flags {
+                    opts.custom_flags(flags);
+                }
+            }
+            opts.append(true).create(true);
+            opts
+        };
+
+        let fd = opts.open(self.file_path())?;
 
         let m = fd.metadata()?;
-        self.size = m.size();
+        self.size = file_size(&m);
         self.created = Some(
             // we attempt to get creation time
             m.created()
