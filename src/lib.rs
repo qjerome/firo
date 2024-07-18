@@ -87,7 +87,7 @@
 //! ```
 
 use std::{
-    fs::{self, Metadata, Permissions},
+    fs::{self, Metadata},
     io::{self, BufRead, BufReader, BufWriter, Write},
     path::{Path, PathBuf},
     thread,
@@ -96,10 +96,13 @@ use std::{
 
 use flate2::{read::GzDecoder, write::GzEncoder};
 use huby::ByteSize;
-#[cfg(target_family = "unix")]
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 #[cfg(windows)]
 use std::os::windows::fs::MetadataExt;
+#[cfg(target_family = "unix")]
+use std::{
+    fs::Permissions,
+    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+};
 use tempfile::{NamedTempFile, PersistError};
 use thiserror::Error;
 
@@ -184,6 +187,7 @@ impl Compression {
         }
     }
 
+    #[allow(unused_variables)]
     fn compress_gzip<P: AsRef<Path>>(path: P, mode: Option<u32>) -> Result<(), CompressionError> {
         let path = path.as_ref();
         let tmp = NamedTempFile::new()?;
@@ -213,8 +217,8 @@ impl Compression {
 
         tmp.persist(&new)?;
 
+        #[cfg(unix)]
         if let Some(mode) = mode {
-            #[cfg(unix)]
             fs::set_permissions(new, Permissions::from_mode(mode))?;
         }
 
