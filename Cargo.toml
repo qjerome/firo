@@ -12,6 +12,6 @@ repository = "https://github.com/qjerome/firo"
 
 [dependencies]
 thiserror = "1.0"
-huby = "0.1"
+huby = "0.2"
 flate2 = "1.0"
 tempfile = "3"
