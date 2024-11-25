@@ -51,7 +51,8 @@
 //! let td = tempfile::tempdir().unwrap();
 //! let p = td.path().join("test.log");
 //! // we initialize a rotating file options
-//! let opts = File::options()
+//! let mut opts = File::options();
+//! opts
 //!     // file will rotate when reaching 1 KB
 //!     .trigger(ByteSize::from_kb(1).into())
 //!     // gzip compression is enabled (at rotation time)
@@ -279,19 +280,19 @@ impl OpenOptions {
     /// Configure the maximum size allowed for a rotating [File].
     /// When the size goes beyond the threshold, oldest files get
     /// deleted
-    pub fn max_size(mut self, m: ByteSize) -> Self {
+    pub fn max_size(&mut self, m: ByteSize) -> &mut Self {
         self.max_size = Some(m);
         self
     }
 
     /// Configure the [Trigger] used to rotate file
-    pub fn trigger(mut self, t: Trigger) -> Self {
+    pub fn trigger(&mut self, t: Trigger) -> &mut Self {
         self.trigger = Some(t);
         self
     }
 
     /// Configure desired [Compression]
-    pub fn compression(mut self, c: Compression) -> Self {
+    pub fn compression(&mut self, c: Compression) -> &mut Self {
         self.compression = Some(c);
         self
     }
@@ -950,8 +951,8 @@ mod test {
     fn test_read_order() {
         let td = tempfile::tempdir().unwrap();
         let p = td.path().join("log");
-        let opts = OpenOptions::new()
-            .trigger(Trigger::Size(ByteSize::from_kb(1)))
+        let mut opts = OpenOptions::new();
+        opts.trigger(Trigger::Size(ByteSize::from_kb(1)))
             .compression(Compression::Gzip);
         let mut f = opts.create_append(&p).unwrap();
 
