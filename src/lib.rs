@@ -8,7 +8,7 @@
 //! - rotation trigger based on size
 //! - file compression (at rotation time)
 //! - maximum size limit, oldest files will start being deleted if
-//! the sum of all files sizes goes beyond the limit
+//!   the sum of all files sizes goes beyond the limit
 //! - **transparently reading** a rotating file
 //!
 //! # Usage Example
@@ -87,6 +87,7 @@
 //! }
 //! ```
 
+use core::debug_assert;
 use std::{
     fs::{self, Metadata},
     io::{self, BufRead, BufReader, BufWriter, Write},
@@ -191,7 +192,12 @@ impl Compression {
     #[allow(unused_variables)]
     fn compress_gzip<P: AsRef<Path>>(path: P, mode: Option<u32>) -> Result<(), CompressionError> {
         let path = path.as_ref();
-        let tmp = NamedTempFile::new()?;
+        // we create temporary file in the current path directory
+        // to avoid cross file system persistence error
+        let tmp = NamedTempFile::new_in(path.parent().ok_or(io::Error::new(
+            io::ErrorKind::NotFound,
+            "cannot create temporary file",
+        ))?)?;
         let mut reader = BufReader::new(fs::File::open(path)?);
         let writer = BufWriter::new(&tmp);
         let mut enc = GzEncoder::new(writer, flate2::Compression::best());
@@ -674,7 +680,9 @@ impl File {
                     };
 
                     self.compress_job = Some(std::thread::spawn(move || {
-                        compression.compress(archive_path, mode)
+                        let r = compression.compress(archive_path, mode);
+                        debug_assert!(r.is_ok(), "compress job failed: {:?}", r);
+                        r
                     }));
                 }
             }
