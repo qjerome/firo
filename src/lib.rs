@@ -23,7 +23,7 @@
 //! let td = tempfile::tempdir().unwrap();
 //!
 //! // we initialize a rotating file options
-//! let mut f = File::options()
+//! let mut f = OpenOptions::new()
 //!     // file will rotate every hours
 //!     .trigger(Duration::from_secs(3600).into())
 //!     // finally create the file
@@ -51,16 +51,13 @@
 //! let td = tempfile::tempdir().unwrap();
 //! let p = td.path().join("test.log");
 //! // we initialize a rotating file options
-//! let mut opts = File::options();
-//! opts
+//! let mut f = OpenOptions::new()
 //!     // file will rotate when reaching 1 KB
 //!     .trigger(ByteSize::from_kb(1).into())
 //!     // gzip compression is enabled (at rotation time)
 //!     .compression(Compression::Gzip)
 //!     // we start deleting oldest file when total size > 1 GB
-//!     .max_size(ByteSize::from_gb(1));
-//!
-//! let mut f = opts
+//!     .max_size(ByteSize::from_gb(1))
 //!     // finally create the file
 //!     .create_append(&p).unwrap();
 //!
@@ -73,7 +70,7 @@
 //! f.sync().unwrap();
 //!
 //! // one can also read a rotating file
-//! let f = opts.open(p).unwrap();
+//! let f = f.open_options().open(p).unwrap();
 //! // we check that file is actually made of several
 //! // files on disk (just for the demo)
 //! assert!(f.files_sorted_by_index().unwrap().len() > 1);
@@ -335,7 +332,7 @@ impl Compression {
 ///
 /// let td = tempfile::tempdir().unwrap();
 ///
-/// let mut f = File::options()
+/// let mut f = OpenOptions::new()
 ///     // file will rotate when reaching 10 MB
 ///     .trigger(Trigger::Size(ByteSize::from_mb(10)))
 ///     // Gzip compression is enabled
@@ -570,6 +567,7 @@ impl Reader {
         Ok(Self { files, reader })
     }
 }
+
 
 /// A rotating file handle that supports automatic rotation based on size or time triggers.
 ///
