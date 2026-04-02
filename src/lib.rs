@@ -164,7 +164,49 @@ impl From<ByteSize> for Trigger {
     }
 }
 
-/// Enumeration to configure compression type
+impl Trigger {
+    /// Creates a `Trigger` from optional time and size parameters.
+    ///
+    /// Returns `None` if both parameters are `None`.
+    /// Otherwise, returns the appropriate `Trigger` variant:
+    /// - `Trigger::Size` if only size is provided
+    /// - `Trigger::Time` if only time is provided
+    /// - `Trigger::SizeOrTime` if both are provided
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use huby::ByteSize;
+    /// use firo::Trigger;
+    ///
+    /// // Size-only trigger
+    /// let trigger = Trigger::from_options(None, Some(ByteSize::from_kb(1)));
+    /// assert!(matches!(trigger, Some(Trigger::Size(_))));
+    ///
+    /// // Time-only trigger
+    /// let trigger = Trigger::from_options(Some(Duration::from_secs(3600)), None);
+    /// assert!(matches!(trigger, Some(Trigger::Time(_))));
+    ///
+    /// // Combined trigger
+    /// let trigger = Trigger::from_options(Some(Duration::from_secs(300)), Some(ByteSize::from_mb(10)));
+    /// assert!(matches!(trigger, Some(Trigger::SizeOrTime(_, _))));
+    ///
+    /// // No trigger
+    /// let trigger = Trigger::from_options(None, None);
+    /// assert!(matches!(trigger, None));
+    /// ```
+    pub fn from_options(t: Option<Duration>, s: Option<ByteSize>) -> Option<Self> {
+        match (t, s) {
+            (None, None) => None,
+            (None, Some(s)) => Some(Self::Size(s)),
+            (Some(t), None) => Some(Self::Time(t)),
+            (Some(t), Some(s)) => Some(Self::SizeOrTime(s, t)),
+        }
+    }
+}
+
+/// Enumeration to configure compression type for rotated log files.
 #[derive(Debug, Clone, Copy)]
 pub enum Compression {
     Gzip,
