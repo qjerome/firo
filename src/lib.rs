@@ -342,6 +342,26 @@ impl OpenOptions {
         self
     }
 
+    /// Sets or clears the [Trigger] used to rotate the file.
+    ///
+    /// Unlike [trigger](OpenOptions::trigger), this method accepts an `Option<Trigger>`,
+    /// allowing you to either set a new trigger or clear any existing trigger by passing `None`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use firo::{OpenOptions, Trigger};
+    /// use std::time::Duration;
+    ///
+    /// // Set a trigger
+    /// let options = OpenOptions::new()
+    ///     .opt_trigger(Some(Trigger::Time(Duration::from_secs(3600))));
+    /// ```
+    pub fn opt_trigger(&mut self, t: Option<Trigger>) -> &mut Self {
+        self.trigger = t;
+        self
+    }
+
     /// Configure desired [Compression]
     pub fn compression(&mut self, c: Compression) -> &mut Self {
         self.compression = Some(c);
