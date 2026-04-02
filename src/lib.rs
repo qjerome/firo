@@ -137,6 +137,45 @@ fn file_size(meta: &Metadata) -> u64 {
     return meta.file_size();
 }
 
+/// Errors that can occur during [`File`] operations.
+#[derive(Error, Debug)]
+pub enum Error {
+    /// The file is not open in read mode.
+    #[error("not open for read")]
+    WrongModeRead,
+    /// The file is not open in write mode.
+    #[error("not open for write")]
+    WrongModeWrite,
+    /// The specified file does not exist.
+    #[error("no such file: {0}")]
+    NoSuchFile(PathBuf),
+    /// The file has been closed and is no longer accessible.
+    #[error("file is closed")]
+    FileClosed,
+    /// The file prefix was not found in the path.
+    #[error("file prefix not found: {0}")]
+    PrefixNotFound(PathBuf),
+    /// The root directory was not found.
+    #[error("root directory not found: {0}")]
+    RootNotFound(PathBuf),
+    /// I/O error during file operations.
+    #[error("io: {0}")]
+    Io(#[from] io::Error),
+    /// Error during compression operations.
+    #[error("compression: {0}")]
+    Compression(#[from] CompressionError),
+}
+
+// Converts Error into io::Error
+impl From<Error> for io::Error {
+    fn from(value: Error) -> Self {
+        match value {
+            Error::Io(io) => io,
+            _ => io::Error::other(value),
+        }
+    }
+}
+
 /// Trigger enumeration used to configure when [File] rotation
 /// happens.
 #[derive(Debug, Clone, Copy)]
@@ -584,35 +623,6 @@ pub struct File {
     compress_job: Option<thread::JoinHandle<Result<(), CompressionError>>>,
 }
 
-#[derive(Error, Debug)]
-pub enum Error {
-    #[error("not open for read")]
-    WrongModeRead,
-    #[error("not open for write")]
-    WrongModeWrite,
-    #[error("no such file: {0}")]
-    NoSuchFile(PathBuf),
-    #[error("file is closed")]
-    FileClosed,
-    #[error("file prefix not found: {0}")]
-    PrefixNotFound(PathBuf),
-    #[error("root directory not found: {0}")]
-    RootNotFound(PathBuf),
-    #[error("io: {0}")]
-    Io(#[from] io::Error),
-    #[error("compression: {0}")]
-    Compression(#[from] CompressionError),
-}
-
-// Converts Error into io::Error
-impl From<Error> for io::Error {
-    fn from(value: Error) -> Self {
-        match value {
-            Error::Io(io) => io,
-            _ => io::Error::other(value),
-        }
-    }
-}
 
 impl io::Write for File {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
@@ -675,12 +685,6 @@ impl File {
             compression: opts.compression,
             compress_job: None,
         })
-    }
-
-    /// Constructs default [OpenOptions] to use for building
-    /// a rotating [File]
-    pub fn options() -> OpenOptions {
-        OpenOptions::default()
     }
 
     /// Returns the [OpenOptions] used by the current [File].
