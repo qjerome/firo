@@ -328,19 +328,60 @@ struct UnixExt {
 }
 
 impl OpenOptions {
+    /// Creates a new `OpenOptions` with default values.
+    ///
+    /// This is equivalent to `OpenOptions::default()`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use firo::OpenOptions;
+    ///
+    /// let options = OpenOptions::new();
+    /// ```
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Configure the maximum size allowed for a rotating [File].
-    /// When the size goes beyond the threshold, oldest files get
-    /// deleted
+    /// Sets the maximum total size allowed for all rotating [File] instances.
+    ///
+    /// When the combined size of all rotated files exceeds this threshold,
+    /// the oldest files are automatically deleted to stay within the limit.
+    /// This does not affect the current active file being written to.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use firo::OpenOptions;
+    ///
+    /// // Limit total rotated files to 10MB
+    /// let options = OpenOptions::new()
+    ///     .max_size(huby::ByteSize::from_mb(10));
+    /// ```
     pub fn max_size(&mut self, m: ByteSize) -> &mut Self {
         self.max_size = Some(m);
         self
     }
 
-    /// Configure the [Trigger] used to rotate file
+    /// Sets the [Trigger] used to rotate the file.
+    ///
+    /// This method replaces any existing trigger with the provided one.
+    /// Use [opt_trigger](OpenOptions::opt_trigger) to optionally set or clear a trigger.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use firo::{OpenOptions, Trigger};
+    /// use std::time::Duration;
+    ///
+    /// // Set a time-based trigger
+    /// let options = OpenOptions::new()
+    ///     .trigger(Trigger::Time(Duration::from_secs(3600)));
+    ///
+    /// // Set a size-based trigger
+    /// let options = OpenOptions::new()
+    ///     .trigger(Trigger::Size(huby::ByteSize::from_mb(1)));
+    /// ```
     pub fn trigger(&mut self, t: Trigger) -> &mut Self {
         self.trigger = Some(t);
         self
@@ -366,18 +407,64 @@ impl OpenOptions {
         self
     }
 
-    /// Configure desired [Compression]
+    /// Enables compression for rotated files.
+    ///
+    /// When compression is enabled, rotated files will be compressed using the specified
+    /// compression algorithm. The current active file being written to is never compressed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use firo::{OpenOptions, Compression};
+    ///
+    /// // Enable gzip compression for rotated files
+    /// let options = OpenOptions::new()
+    ///     .compression(Compression::Gzip);
+    /// ```
     pub fn compression(&mut self, c: Compression) -> &mut Self {
         self.compression = Some(c);
         self
     }
 
-    /// Create a [File] in append mode from options
+    /// Creates a new [File] in append mode using the configured options.
+    ///
+    /// The file will be created if it doesn't exist, or appended to if it does.
+    /// Rotation triggers and other options will be applied to this file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be created or opened for writing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use firo::OpenOptions;
+    ///
+    /// let mut file = OpenOptions::new()
+    ///     .create_append("/tmp/my_log.log")
+    ///     .expect("Failed to create log file");
+    /// ```
     pub fn create_append<P: AsRef<Path>>(self, path: P) -> Result<File, Error> {
         File::create_append_with_options(path, self)
     }
 
-    /// Open a [File] for reading
+    /// Opens an existing [File] for reading using the configured options.
+    ///
+    /// This is primarily used to read from rotated log files.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be opened for reading.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use firo::OpenOptions;
+    ///
+    /// let file = OpenOptions::new()
+    ///     .open("/tmp/my_log.log")
+    ///     .expect("Failed to open log file");
+    /// ```
     pub fn open<P: AsRef<Path>>(self, path: P) -> Result<File, Error> {
         File::open_with_options(path, self)
     }
