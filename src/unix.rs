@@ -39,10 +39,8 @@ mod test {
 
         let start = Instant::now();
 
-        let mut c = 0usize;
         while Instant::now().checked_duration_since(start).unwrap() < Duration::from_secs(2) {
             writeln!(f, "test").unwrap();
-            c = c.saturating_add(1);
         }
 
         f.sync().unwrap();

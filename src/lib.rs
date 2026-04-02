@@ -23,7 +23,7 @@
 //! let td = tempfile::tempdir().unwrap();
 //!
 //! // we initialize a rotating file options
-//! let mut f = File::options()
+//! let mut f = OpenOptions::new()
 //!     // file will rotate every hours
 //!     .trigger(Duration::from_secs(3600).into())
 //!     // finally create the file
@@ -51,16 +51,13 @@
 //! let td = tempfile::tempdir().unwrap();
 //! let p = td.path().join("test.log");
 //! // we initialize a rotating file options
-//! let mut opts = File::options();
-//! opts
+//! let mut f = OpenOptions::new()
 //!     // file will rotate when reaching 1 KB
 //!     .trigger(ByteSize::from_kb(1).into())
 //!     // gzip compression is enabled (at rotation time)
 //!     .compression(Compression::Gzip)
 //!     // we start deleting oldest file when total size > 1 GB
-//!     .max_size(ByteSize::from_gb(1));
-//!
-//! let mut f = opts
+//!     .max_size(ByteSize::from_gb(1))
 //!     // finally create the file
 //!     .create_append(&p).unwrap();
 //!
@@ -73,7 +70,7 @@
 //! f.sync().unwrap();
 //!
 //! // one can also read a rotating file
-//! let f = opts.open(p).unwrap();
+//! let f = f.open_options().open(p).unwrap();
 //! // we check that file is actually made of several
 //! // files on disk (just for the demo)
 //! assert!(f.files_sorted_by_index().unwrap().len() > 1);
@@ -86,6 +83,9 @@
 //!     assert_eq!(i, cmp);
 //! }
 //! ```
+#![deny(unsafe_code)]
+#![deny(unused_imports)]
+#![deny(missing_docs)]
 
 use core::debug_assert;
 use std::{
@@ -137,6 +137,45 @@ fn file_size(meta: &Metadata) -> u64 {
     return meta.file_size();
 }
 
+/// Errors that can occur during [`File`] operations.
+#[derive(Error, Debug)]
+pub enum Error {
+    /// The file is not open in read mode.
+    #[error("not open for read")]
+    WrongModeRead,
+    /// The file is not open in write mode.
+    #[error("not open for write")]
+    WrongModeWrite,
+    /// The specified file does not exist.
+    #[error("no such file: {0}")]
+    NoSuchFile(PathBuf),
+    /// The file has been closed and is no longer accessible.
+    #[error("file is closed")]
+    FileClosed,
+    /// The file prefix was not found in the path.
+    #[error("file prefix not found: {0}")]
+    PrefixNotFound(PathBuf),
+    /// The root directory was not found.
+    #[error("root directory not found: {0}")]
+    RootNotFound(PathBuf),
+    /// I/O error during file operations.
+    #[error("io: {0}")]
+    Io(#[from] io::Error),
+    /// Error during compression operations.
+    #[error("compression: {0}")]
+    Compression(#[from] CompressionError),
+}
+
+// Converts Error into io::Error
+impl From<Error> for io::Error {
+    fn from(value: Error) -> Self {
+        match value {
+            Error::Io(io) => io,
+            _ => io::Error::other(value),
+        }
+    }
+}
+
 /// Trigger enumeration used to configure when [File] rotation
 /// happens.
 #[derive(Debug, Clone, Copy)]
@@ -164,16 +203,62 @@ impl From<ByteSize> for Trigger {
     }
 }
 
-/// Enumeration to configure compression type
+impl Trigger {
+    /// Creates a `Trigger` from optional time and size parameters.
+    ///
+    /// Returns `None` if both parameters are `None`.
+    /// Otherwise, returns the appropriate `Trigger` variant:
+    /// - `Trigger::Size` if only size is provided
+    /// - `Trigger::Time` if only time is provided
+    /// - `Trigger::SizeOrTime` if both are provided
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use huby::ByteSize;
+    /// use firo::Trigger;
+    ///
+    /// // Size-only trigger
+    /// let trigger = Trigger::from_options(None, Some(ByteSize::from_kb(1)));
+    /// assert!(matches!(trigger, Some(Trigger::Size(_))));
+    ///
+    /// // Time-only trigger
+    /// let trigger = Trigger::from_options(Some(Duration::from_secs(3600)), None);
+    /// assert!(matches!(trigger, Some(Trigger::Time(_))));
+    ///
+    /// // Combined trigger
+    /// let trigger = Trigger::from_options(Some(Duration::from_secs(300)), Some(ByteSize::from_mb(10)));
+    /// assert!(matches!(trigger, Some(Trigger::SizeOrTime(_, _))));
+    ///
+    /// // No trigger
+    /// let trigger = Trigger::from_options(None, None);
+    /// assert!(matches!(trigger, None));
+    /// ```
+    pub fn from_options(t: Option<Duration>, s: Option<ByteSize>) -> Option<Self> {
+        match (t, s) {
+            (None, None) => None,
+            (None, Some(s)) => Some(Self::Size(s)),
+            (Some(t), None) => Some(Self::Time(t)),
+            (Some(t), Some(s)) => Some(Self::SizeOrTime(s, t)),
+        }
+    }
+}
+
+/// Enumeration to configure compression type for rotated log files.
 #[derive(Debug, Clone, Copy)]
 pub enum Compression {
+    /// Gzip compression using the flate2 crate.
     Gzip,
 }
 
+/// Errors that can occur during file compression operations.
 #[derive(Debug, Error)]
 pub enum CompressionError {
+    /// Error occurred while persisting temporary file used for compression to disk.
     #[error("persist: {0}")]
     Persist(#[from] PersistError),
+    /// I/O error during compression operations.
     #[error("io: {0}")]
     Io(#[from] io::Error),
 }
@@ -250,7 +335,7 @@ impl Compression {
 ///
 /// let td = tempfile::tempdir().unwrap();
 ///
-/// let mut f = File::options()
+/// let mut f = OpenOptions::new()
 ///     // file will rotate when reaching 10 MB
 ///     .trigger(Trigger::Size(ByteSize::from_mb(10)))
 ///     // Gzip compression is enabled
@@ -282,36 +367,143 @@ struct UnixExt {
 }
 
 impl OpenOptions {
+    /// Creates a new `OpenOptions` with default values.
+    ///
+    /// This is equivalent to `OpenOptions::default()`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use firo::OpenOptions;
+    ///
+    /// let options = OpenOptions::new();
+    /// ```
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Configure the maximum size allowed for a rotating [File].
-    /// When the size goes beyond the threshold, oldest files get
-    /// deleted
+    /// Sets the maximum total size allowed for all rotating [File] instances.
+    ///
+    /// When the combined size of all rotated files exceeds this threshold,
+    /// the oldest files are automatically deleted to stay within the limit.
+    /// This does not affect the current active file being written to.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use firo::OpenOptions;
+    ///
+    /// // Limit total rotated files to 10MB
+    /// let options = OpenOptions::new()
+    ///     .max_size(huby::ByteSize::from_mb(10));
+    /// ```
     pub fn max_size(&mut self, m: ByteSize) -> &mut Self {
         self.max_size = Some(m);
         self
     }
 
-    /// Configure the [Trigger] used to rotate file
+    /// Sets the [Trigger] used to rotate the file.
+    ///
+    /// This method replaces any existing trigger with the provided one.
+    /// Use [opt_trigger](OpenOptions::opt_trigger) to optionally set or clear a trigger.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use firo::{OpenOptions, Trigger};
+    /// use std::time::Duration;
+    ///
+    /// // Set a time-based trigger
+    /// let options = OpenOptions::new()
+    ///     .trigger(Trigger::Time(Duration::from_secs(3600)));
+    ///
+    /// // Set a size-based trigger
+    /// let options = OpenOptions::new()
+    ///     .trigger(Trigger::Size(huby::ByteSize::from_mb(1)));
+    /// ```
     pub fn trigger(&mut self, t: Trigger) -> &mut Self {
         self.trigger = Some(t);
         self
     }
 
-    /// Configure desired [Compression]
+    /// Sets or clears the [Trigger] used to rotate the file.
+    ///
+    /// Unlike [trigger](OpenOptions::trigger), this method accepts an `Option<Trigger>`,
+    /// allowing you to either set a new trigger or clear any existing trigger by passing `None`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use firo::{OpenOptions, Trigger};
+    /// use std::time::Duration;
+    ///
+    /// // Set a trigger
+    /// let options = OpenOptions::new()
+    ///     .opt_trigger(Some(Trigger::Time(Duration::from_secs(3600))));
+    /// ```
+    pub fn opt_trigger(&mut self, t: Option<Trigger>) -> &mut Self {
+        self.trigger = t;
+        self
+    }
+
+    /// Enables compression for rotated files.
+    ///
+    /// When compression is enabled, rotated files will be compressed using the specified
+    /// compression algorithm. The current active file being written to is never compressed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use firo::{OpenOptions, Compression};
+    ///
+    /// // Enable gzip compression for rotated files
+    /// let options = OpenOptions::new()
+    ///     .compression(Compression::Gzip);
+    /// ```
     pub fn compression(&mut self, c: Compression) -> &mut Self {
         self.compression = Some(c);
         self
     }
 
-    /// Create a [File] in append mode from options
+    /// Creates a new [File] in append mode using the configured options.
+    ///
+    /// The file will be created if it doesn't exist, or appended to if it does.
+    /// Rotation triggers and other options will be applied to this file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be created or opened for writing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use firo::OpenOptions;
+    ///
+    /// let mut file = OpenOptions::new()
+    ///     .create_append("/tmp/my_log.log")
+    ///     .expect("Failed to create log file");
+    /// ```
     pub fn create_append<P: AsRef<Path>>(self, path: P) -> Result<File, Error> {
         File::create_append_with_options(path, self)
     }
 
-    /// Open a [File] for reading
+    /// Opens an existing [File] for reading using the configured options.
+    ///
+    /// This is primarily used to read from rotated log files.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be opened for reading.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use firo::OpenOptions;
+    ///
+    /// let file = OpenOptions::new()
+    ///     .open("/tmp/my_log.log")
+    ///     .expect("Failed to open log file");
+    /// ```
     pub fn open<P: AsRef<Path>>(self, path: P) -> Result<File, Error> {
         File::open_with_options(path, self)
     }
@@ -379,6 +571,43 @@ impl Reader {
     }
 }
 
+
+/// A rotating file handle that supports automatic rotation based on size or time triggers.
+///
+/// Files are rotated when any of the configured triggers are met. Rotated files are
+/// renamed with an incrementing index suffix (e.g., `file.1`, `file.2`).
+///
+/// # Important Notes
+///
+/// - When compression is enabled, a new thread is spawned at rotation time to
+///   compress the rotated file asynchronously. This allows write operations to
+///   continue without blocking.
+/// - The compression thread will be joined when the [File] is dropped or explicitly
+///   closed, ensuring all compression operations complete.
+///
+/// # Examples
+///
+/// ```
+/// use firo::{File, OpenOptions, Trigger};
+/// use std::time::Duration;
+/// use huby::ByteSize;
+/// use std::io::Write;
+///
+/// // use temporary directory for test purposes
+/// let td = tempfile::tempdir().unwrap();
+/// let p = td.path().join("my_log.log");
+/// // Create a file that rotates every 1MB or every hour
+/// let mut file = OpenOptions::new()
+///     .trigger(Trigger::SizeOrTime(
+///         ByteSize::from_mb(1),
+///         Duration::from_secs(3600)
+///     ))
+///     .create_append(&p)
+///     .unwrap();
+///
+/// // Write data - file will auto-rotate when triggers are met
+/// writeln!(file, "Log entry").unwrap();
+/// ```
 #[derive(Debug, Default)]
 pub struct File {
     #[cfg(target_family = "unix")]
@@ -395,35 +624,6 @@ pub struct File {
     compress_job: Option<thread::JoinHandle<Result<(), CompressionError>>>,
 }
 
-#[derive(Error, Debug)]
-pub enum Error {
-    #[error("not open for read")]
-    WrongModeRead,
-    #[error("not open for write")]
-    WrongModeWrite,
-    #[error("no such file: {0}")]
-    NoSuchFile(PathBuf),
-    #[error("file is closed")]
-    FileClosed,
-    #[error("file prefix not found: {0}")]
-    PrefixNotFound(PathBuf),
-    #[error("root directory not found: {0}")]
-    RootNotFound(PathBuf),
-    #[error("io: {0}")]
-    Io(#[from] io::Error),
-    #[error("compression: {0}")]
-    Compression(#[from] CompressionError),
-}
-
-// Converts Error into io::Error
-impl From<Error> for io::Error {
-    fn from(value: Error) -> Self {
-        match value {
-            Error::Io(io) => io,
-            _ => io::Error::other(value),
-        }
-    }
-}
 
 impl io::Write for File {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
@@ -488,13 +688,19 @@ impl File {
         })
     }
 
-    /// Constructs default [OpenOptions] to use for building
-    /// a rotating [File]
-    pub fn options() -> OpenOptions {
-        OpenOptions::default()
-    }
-
     /// Returns the [OpenOptions] used by the current [File].
+    ///
+    /// This can be useful for creating new files with the same configuration
+    /// or for inspecting the current file's configuration.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use firo::File;
+    ///
+    /// let file = File::create_append("/tmp/log.txt").unwrap();
+    /// let options = file.open_options();
+    /// ```
     pub fn open_options(&self) -> OpenOptions {
         OpenOptions {
             max_size: self.max_size,
@@ -505,12 +711,46 @@ impl File {
         }
     }
 
-    /// Creates a new rotating [File]
+    /// Creates a new rotating [File] with default options.
+    ///
+    /// This is equivalent to `File::create_append_with_options(file, OpenOptions::default())`.
+    /// The file will be created if it doesn't exist, or appended to if it does.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be created or opened for writing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use firo::File;
+    ///
+    /// let mut file = File::create_append("/tmp/my_log.log")
+    ///     .expect("Failed to create log file");
+    /// ```
     pub fn create_append<P: AsRef<Path>>(file: P) -> Result<Self, Error> {
         Self::create_append_with_options(file, OpenOptions::default())
     }
 
-    /// Opening an existing rotating [File] with [OpenOptions]
+    /// Opens an existing rotating [File] with specified [OpenOptions].
+    ///
+    /// This method is primarily used for reading from existing rotated log files
+    /// while maintaining consistent configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be opened for reading or if the
+    /// provided options are incompatible with the existing file.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use firo::{File, OpenOptions};
+    ///
+    /// let options = OpenOptions::new();
+    /// let file = File::open_with_options("/tmp/my_log.log", options)
+    ///     .expect("Failed to open log file");
+    /// ```
     pub fn open_with_options<P: AsRef<Path>>(file: P, opts: OpenOptions) -> Result<Self, Error> {
         let mut f = Self::new(file, opts)?;
 
@@ -519,7 +759,29 @@ impl File {
         Ok(f)
     }
 
-    /// Creates a new rotating [File] with the given [OpenOptions]
+    /// Creates a new rotating [File] with custom [OpenOptions].
+    ///
+    /// This is the most flexible way to create a rotating file, allowing
+    /// full configuration of triggers, compression, and size limits.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be created or if the provided
+    /// options are invalid.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use firo::{File, OpenOptions, Trigger};
+    /// use std::time::Duration;
+    ///
+    /// let mut options = OpenOptions::new();
+    /// options.trigger(Trigger::Time(Duration::from_secs(3600)))
+    ///        .compression(firo::Compression::Gzip);
+    ///
+    /// let mut file = File::create_append_with_options("/tmp/my_log.txt", options)
+    ///     .expect("Failed to create log file");
+    /// ```
     pub fn create_append_with_options<P: AsRef<Path>>(
         file: P,
         opts: OpenOptions,
@@ -531,8 +793,21 @@ impl File {
         Ok(f)
     }
 
-    /// Return the path to the [File]. This [Path] is always
-    /// the one of the current file being written.
+    /// Returns the path to the current active [File] being written.
+    ///
+    /// This path always points to the current file where new writes will go,
+    /// not to any rotated files.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use firo::File;
+    /// use std::path::PathBuf;
+    ///
+    /// let file = File::create_append("/tmp/my_log.log").unwrap();
+    /// let path = file.file_path();
+    /// assert_eq!(file.file_path(), PathBuf::from("/tmp/my_log.log"));
+    /// ```
     #[inline(always)]
     pub fn file_path(&self) -> PathBuf {
         self.dir.join(&self.prefix)
@@ -603,7 +878,22 @@ impl File {
         Ok(out)
     }
 
-    /// Exposes the list of files belonging to the rotating [File].
+    /// Returns a list of all rotated files sorted by their rotation index.
+    ///
+    /// This method returns paths to all rotated files associated with this [File],
+    /// sorted from oldest (lowest index) to newest (highest index). The current
+    /// active file being written to will be the last vector item.
+    ///
+    /// Rotated files follow the naming pattern: `prefix.1`, `prefix.2`, etc., where
+    /// the number represents the rotation index.
+    ///
+    /// # Returns
+    ///
+    /// A vector of [PathBuf] objects representing the rotated files, sorted by index.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on any failure during the listing process.
     #[inline]
     pub fn files_sorted_by_index(&self) -> Result<Vec<PathBuf>, Error> {
         let mut files = self.list_files()?;
@@ -611,8 +901,24 @@ impl File {
         Ok(files.into_iter().map(|(_, _, p)| p).collect())
     }
 
-    /// Returns the size of the rotating [File]. The size is computed by
-    /// summing up all the files (compressed or not) belonging to the file
+    /// Returns the total size in bytes of all files in the rotating file set.
+    ///
+    /// This method calculates the combined size of:
+    /// - The current active file being written to
+    /// - All rotated files (both compressed or uncompressed)
+    ///
+    /// The returned size represents the actual disk usage of all files
+    /// associated with this rotating file instance.
+    ///
+    /// # Returns
+    ///
+    /// The total size in bytes as a `u64`. For compressed files, this uses
+    /// the compressed size on disk, not the original uncompressed size.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any of the files cannot be accessed or if their
+    /// metadata cannot be read.
     #[inline]
     pub fn size(&self) -> Result<u64, Error> {
         Ok(self
@@ -622,9 +928,37 @@ impl File {
             .sum())
     }
 
-    /// Manually rotate [File]. If compression is enabled, a thread
-    /// will be started to compress the file being rotated. In the mean time
-    /// you can continue using the [File].
+    /// Manually triggers rotation of the current file.
+    ///
+    /// This method performs the following operations:
+    /// 1. Flushes any buffered writes to disk
+    /// 2. Waits for any ongoing compression to complete
+    /// 3. Renames the current file with the next available rotation index
+    /// 4. Creates a new current file for continued writing
+    /// 5. If compression is enabled, spawns a new thread to compress the rotated file
+    /// 6. If max_size is configured, deletes oldest files to stay within the limit
+    ///
+    /// # Performance Characteristics
+    ///
+    /// - The method may block briefly while waiting for compression to complete
+    /// - File I/O operations are performed synchronously
+    /// - Compression happens asynchronously in a separate thread
+    /// - Write operations can continue immediately after this method returns
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if critical operation fails during rotation:
+    /// - Flushing the current file fails
+    /// - Compression thread fails
+    /// - File renaming operations fail
+    /// - Creating the new current file fails
+    /// - File deletion (for size management) fails
+    ///
+    /// # See Also
+    ///
+    /// - [sync](File::sync): Synchronize writes and wait for compression
+    /// - [files_sorted_by_index](File::files_sorted_by_index): List rotated files
+    /// - [size](File::size): Check total disk usage
     #[inline]
     pub fn rotate(&mut self) -> Result<(), Error> {
         if let Some(f) = self.writer.as_mut() {
@@ -768,13 +1102,35 @@ impl File {
         Ok(())
     }
 
-    /// Attempts to sync data to disk.
+    /// Synchronizes all buffered data to disk and waits for compression to complete.
     ///
-    /// # Warning
-    /// This call will also wait for any ongoing
-    /// compression routine to end. If a big file
-    /// is currently under compression calling this method
-    /// may block the program for some time.
+    /// This method performs two operations:
+    /// 1. Flushes all buffered writes to the underlying file
+    /// 2. Waits for any ongoing compression operations to finish
+    ///
+    /// # Performance Considerations
+    ///
+    /// If compression is enabled and a large file is currently being compressed,
+    /// this call may block for a significant amount of time while waiting for
+    /// the compression to complete. Consider using [flush](File::flush) if you
+    /// only need to ensure writes are durably stored without waiting for compression.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if flushing the file fails or if compression routine failed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use firo::File;
+    /// use std::io::Write;
+    ///
+    /// let mut file = File::create_append("/tmp/log.txt").unwrap();
+    /// writeln!(file, "Important data").unwrap();
+    ///
+    /// // Ensure everything is safely written and compressed
+    /// file.sync().expect("Failed to sync");
+    /// ```
     #[inline]
     pub fn sync(&mut self) -> Result<(), Error> {
         self.flush()?;
