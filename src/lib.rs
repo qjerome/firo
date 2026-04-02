@@ -83,6 +83,9 @@
 //!     assert_eq!(i, cmp);
 //! }
 //! ```
+#![deny(unsafe_code)]
+#![deny(unused_imports)]
+#![deny(missing_docs)]
 
 use core::debug_assert;
 use std::{
