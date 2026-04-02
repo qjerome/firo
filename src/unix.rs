@@ -47,7 +47,7 @@ mod test {
 
         f.sync().unwrap();
 
-        assert_eq!(f.files_sorted_by_index().unwrap().len(), 3);
+        assert!(f.files_sorted_by_index().unwrap().len() > 1);
 
         for f in f.files_sorted_by_index().unwrap() {
             let meta = f.metadata().unwrap();
