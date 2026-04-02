@@ -209,13 +209,17 @@ impl Trigger {
 /// Enumeration to configure compression type for rotated log files.
 #[derive(Debug, Clone, Copy)]
 pub enum Compression {
+    /// Gzip compression using the flate2 crate.
     Gzip,
 }
 
+/// Errors that can occur during file compression operations.
 #[derive(Debug, Error)]
 pub enum CompressionError {
+    /// Error occurred while persisting temporary file used for compression to disk.
     #[error("persist: {0}")]
     Persist(#[from] PersistError),
+    /// I/O error during compression operations.
     #[error("io: {0}")]
     Io(#[from] io::Error),
 }
