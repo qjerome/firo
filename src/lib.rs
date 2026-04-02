@@ -141,12 +141,15 @@ fn file_size(meta: &Metadata) -> u64 {
 /// happens.
 #[derive(Debug, Clone, Copy)]
 pub enum Trigger {
-    /// Size based trigger: will rotate file when current file
+    /// Size based trigger: will rotate file when current file
     /// reaches a given size.
     Size(ByteSize),
     /// Duration based trigger: will rotate file when duration since
     /// file creation reaches a given duration.
     Time(Duration),
+    /// Combined trigger: will rotate file when either the size limit
+    /// is reached or the time duration has elapsed, whichever comes first.
+    SizeOrTime(ByteSize, Duration),
 }
 
 impl From<Duration> for Trigger {
@@ -697,12 +700,16 @@ impl File {
         if let Some(t) = self.trigger.as_ref() {
             return match t {
                 Trigger::Size(s) => ByteSize::from_bytes(self.size) >= *s,
-                Trigger::Time(d) => {
-                    if let Some(open_instant) = self.created {
-                        SystemTime::now().duration_since(open_instant).unwrap() >= *d
-                    } else {
-                        false
-                    }
+                Trigger::Time(d) => self
+                    .created
+                    .map(|c| SystemTime::now().duration_since(c).unwrap() >= *d)
+                    .unwrap_or_default(),
+                Trigger::SizeOrTime(s, d) => {
+                    ByteSize::from_bytes(self.size) >= *s
+                        || self
+                            .created
+                            .map(|c| SystemTime::now().duration_since(c).unwrap() >= *d)
+                            .unwrap_or_default()
                 }
             };
         }
@@ -846,7 +853,40 @@ mod test {
 
         f.sync().unwrap();
 
-        assert_eq!(f.files_sorted_by_index().unwrap().len(), 5);
+        // not stable number of files (4 or 5) but important is more
+        // that we can later read the good numbers of lines written
+        assert!(f.files_sorted_by_index().unwrap().len() >= 4);
+
+        let r = BufReader::new(f.open_options().open(p).unwrap());
+        assert_eq!(r.lines().count(), c)
+    }
+
+    #[test]
+    fn test_size_or_time_rotate_time() {
+        // We test SizeOrTime trigger but only triggering on time
+        let td = tempfile::tempdir().unwrap();
+        let p = td.path().join("log");
+        let mut f = OpenOptions::new()
+            .trigger(Trigger::SizeOrTime(
+                ByteSize::from_mb(50),
+                Duration::from_millis(500),
+            ))
+            .create_append(&p)
+            .unwrap();
+
+        let start = Instant::now();
+
+        let mut c = 0usize;
+        while Instant::now().checked_duration_since(start).unwrap() < Duration::from_secs(2) {
+            writeln!(f, "test").unwrap();
+            c = c.saturating_add(1);
+        }
+
+        f.sync().unwrap();
+
+        // not stable number of files (4 or 5) but important is more
+        // that we can later read the good numbers of lines written
+        assert!(f.files_sorted_by_index().unwrap().len() >= 4);
 
         let r = BufReader::new(f.open_options().open(p).unwrap());
         assert_eq!(r.lines().count(), c)
@@ -859,6 +899,35 @@ mod test {
         let p = td.path().join("log");
         let mut f = OpenOptions::new()
             .trigger(ByteSize::from_bytes(50).into())
+            .create_append(&p)
+            .unwrap();
+
+        // we rotate every 10 iteration
+        for _ in 0..100 {
+            // we write 5 bytes
+            writeln!(f, "test").unwrap();
+        }
+
+        f.flush().unwrap();
+
+        assert_eq!(f.files_sorted_by_index().unwrap().len(), 10);
+        assert_eq!(f.size().unwrap(), 500);
+        let r = BufReader::new(f.open_options().open(p).unwrap());
+
+        assert_eq!(r.lines().count(), 100);
+    }
+
+    #[test]
+    fn test_size_or_time_rotate_size() {
+        // We test SizeOrTime trigger but only triggering on size
+        let td = tempfile::tempdir().unwrap();
+
+        let p = td.path().join("log");
+        let mut f = OpenOptions::new()
+            .trigger(Trigger::SizeOrTime(
+                ByteSize::from_bytes(50),
+                Duration::from_secs(600),
+            ))
             .create_append(&p)
             .unwrap();
 
