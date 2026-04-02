@@ -571,7 +571,6 @@ impl Reader {
     }
 }
 
-
 /// A rotating file handle that supports automatic rotation based on size or time triggers.
 ///
 /// Files are rotated when any of the configured triggers are met. Rotated files are
@@ -623,7 +622,6 @@ pub struct File {
     compression: Option<Compression>,
     compress_job: Option<thread::JoinHandle<Result<(), CompressionError>>>,
 }
-
 
 impl io::Write for File {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
@@ -822,7 +820,7 @@ impl File {
             }
 
             // if filename is current file index is 0
-            if file_name == PathBuf::from(&self.prefix) {
+            if file_name == self.prefix {
                 return Some(0);
             }
 
